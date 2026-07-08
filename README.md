@@ -22,32 +22,76 @@ flowchart LR
     D --> G
 ```
 
+### Agent 模式架构（LangGraph 多步推理）
+
+开启 Agent 模式后，系统从"检索→回答"升级为自主决策的多步推理循环：
+
+```mermaid
+flowchart TD
+    START(( )) --> P[🧠 Planner<br/>LLM 拆解问题→N个子问题]
+    P --> R[🔍 Researcher<br/>每个子问题并行检索+摘要]
+    R --> V[✅ Verifier<br/>结构性检查：覆盖率/矛盾/缺口]
+    V --> S[✍️ Synthesizer<br/>综合所有发现生成完整回答]
+    S --> C[🔎 Critic<br/>自我审查：回答完整吗？]
+    C -->|NEED_MORE| I[➕ 补充搜索反馈]
+    I --> P
+    C -->|PASS| END(( ))
+
+    style START fill:#4CAF50,color:#fff
+    style END fill:#4CAF50,color:#fff
+    style C fill:#FF9800,color:#fff
+```
+
+> **关键设计**：Critic 节点自主输出 PASS / NEED_MORE，触发条件边回到 Planner 重新搜索（最多 2 轮迭代）。这使系统具备了**自我反思能力**——不满足于第一次检索结果时，会自动补充搜索。
+
 ## 快速开始
 
-### 1. 环境要求
+### 🐳 Docker 部署（推荐，一键启动）
 
-- Python 3.10+
-- [Ollama](https://ollama.com) 已安装并启动
-- 至少 8GB 空闲内存（嵌入模型约 400MB + LLM 约 4.7GB）
-
-### 2. 安装依赖
+无需安装 Python 环境，只需 Docker Desktop。
 
 ```bash
+# 1. 克隆仓库
+git clone https://github.com/NN-234-dev/rag-qa-system.git
+cd rag-qa-system
+
+# 2. 一键启动（首次构建镜像约 3-5 分钟）
+docker compose up -d
+
+# 3. 拉取 AI 模型（仅首次需要，约 4.7GB）
+bash setup-models.sh
+
+# 4. 浏览器打开
+# http://localhost:8501
+```
+
+**服务架构**：
+```
+docker compose up
+├── ollama (端口 11434)    ← deepseek-r1:7b 模型推理
+└── rag-app (端口 8501)    ← Streamlit UI + RAG 引擎
+    ├── ChromaDB + SQLite  ← 持久化在 Docker Volume，重启不丢失
+    └── BGE Embedding      ← 首次运行自动下载并缓存
+```
+
+> **给面试官**：如果不想装 Docker，可以直接看 `README.md` 中的架构图和下方设计决策了解系统设计，或要求候选人现场 Live Demo。
+
+---
+
+### 本地开发部署（从源码运行）
+
+**环境要求**：Python 3.10+ / [Ollama](https://ollama.com) / 8GB+ 内存
+
+```bash
+# 1. 安装依赖
 cd rag-qa-system
 pip install -r requirements.txt
-```
 
-### 3. 拉取模型
-
-```bash
+# 2. 拉取模型
 ollama pull deepseek-r1:7b            # 文本生成 (~4.7GB)
-ollama pull nomic-embed-text           # 可选，当前用 BGE 本地嵌入
-ollama pull llama3.2-vision:11b        # 可选，图片/表格识别 (~7.8GB)
-```
+ollama pull llama3.2-vision:11b        # 可选，图片识别 (~7.8GB)
 
-### 4. 启动
-
-```bash
+# 3. 启动
 streamlit run app.py
 ```
 
@@ -71,9 +115,14 @@ streamlit run app.py
 
 ```
 rag-qa-system/
-├── app.py                      # Streamlit 主界面（多用户版）
+├── app.py                      # Streamlit 主界面（多用户版 + Agent 模式）
 ├── config.py                   # 全局配置常量
 ├── requirements.txt            # Python 依赖
+├── Dockerfile                  # Docker 镜像构建
+├── docker-compose.yml          # 一键编排 Ollama + RAG 服务
+├── setup-models.sh             # 首次启动模型拉取脚本
+├── .dockerignore
+├── .gitignore
 ├── README.md                   # 本文件
 ├── interview_prep.md           # 面试高频问题+回答要点
 ├── mcp_config.json.example     # MCP 客户端配置示例
@@ -86,6 +135,7 @@ rag-qa-system/
 │   ├── hybrid_retriever.py     # 语义 + BM25 + RRF 融合检索
 │   ├── llm_client.py           # Ollama API 封装（文本+视觉）
 │   ├── qa_chain.py             # RAG 问答完整流水线
+│   ├── agent_graph.py           # LangGraph Agent 多步推理引擎
 │   ├── query_rewriter.py       # LLM 查询改写（口语→搜索查询）
 │   ├── llm_reranker.py         # Pointwise LLM 重排序
 │   ├── image_handler.py        # PDF 图片/表格提取 + 视觉描述
@@ -93,12 +143,13 @@ rag-qa-system/
 │   ├── mcp_server.py            # MCP Server（AI Agent 原生协议）
 │   ├── api_server.py            # REST API Server（通用 HTTP）
 │   └── knowledge_db.py         # SQLite 文档元数据 CRUD
-├── data/
+├── data/                       # 运行时数据（不上传 Git）
 │   ├── uploads/                # 上传的原始文档
 │   ├── chroma_db/              # Chroma 持久化目录
 │   ├── extracted_images/       # PDF 中提取的图片
 │   └── knowledge.db            # SQLite 数据库
-└── requirements.txt
+├── test_e2e.py                 # 端到端测试
+└── test_pipeline.py            # 检索效果对比测试
 ```
 
 ## 核心设计决策
@@ -139,7 +190,21 @@ $$RRF\ score = \sum_{i} \frac{1}{k + rank_i},\quad k=60$$
   → 返回答案 + 引用来源（标注🔒私人/🌐公共）
 ```
 
-### 6. 幻觉控制
+### 6. Agent 多步推理（LangGraph）
+
+从线性管线升级为自主决策的 Agent 系统：
+
+| 节点 | 职责 | LLM |
+|------|------|-----|
+| **Planner** | 将复杂问题拆解为 2-5 个子问题 | ✅ |
+| **Researcher** | 每个子问题独立检索 + LLM 摘要 | ✅ |
+| **Verifier** | 结构性检查（覆盖率/矛盾/缺口），零 LLM | ❌ |
+| **Synthesizer** | 综合所有发现，生成完整回答 | ✅ |
+| **Critic** | 自我审查：判断是否需要补充搜索 | ✅ |
+
+**为什么是 5 节点而不是简单的 ReAct？** ReAct 适合工具调用类任务（"帮我发邮件"），但知识问答需要的是"拆解→检索→验证→综合"的深度推理链。Verifier 用零 LLM 的结构性检查（比 LLM 快 10 倍），Critic 用 LLM 判断是否需要补充搜索——各司其职。
+
+### 7. 幻觉控制
 
 - **严格 Prompt 约束**："只使用参考资料中的信息，不要编造"
 - **相似度阈值过滤**：cosine 距离 > 0.5 的文档直接丢弃
@@ -150,17 +215,19 @@ $$RRF\ score = \sum_{i} \frac{1}{k + rank_i},\quad k=60$$
 
 - [x] 多格式文档（PDF/Word/TXT/Markdown）
 - [x] 混合检索（语义 + BM25 + RRF）
+- [x] LLM 重排序（Pointwise 打分，两阶段精排）
+- [x] LangGraph Agent 多步推理（5 节点 + 自我反思闭环）
 - [x] 查询改写（口语→搜索查询）
-- [x] LLM 重排序（Pointwise 打分）
 - [x] 多用户知识库隔离（私人/公共）
 - [x] 图片/表格识别（NotebookLM 风格）
-- [x] 流式输出（逐 token 渲染）
-- [x] 来源引用（标注文档名 + 片段预览）
-- [x] 引用来源标注知识库来源（私人🔒/公共🌐）
-- [x] 参数可调（Chunk Size / Top-K / Temperature）
-- [x] 完全本地运行（无需联网）
+- [x] 流式输出（逐 token 渲染 + Agent 阶段进度）
+- [x] 来源引用（标注文档名 + 片段预览 + 知识库来源）
+- [x] 参数可调（Chunk Size / Top-K / Temperature / Agent 开关）
+- [x] Docker 一键部署（`docker compose up`）
 - [x] MCP Server 集成（可被 Claude Code/Cursor 等 Agent 调用）
 - [x] REST API 集成（任意语言、任意大模型 HTTP 调用）
+- [x] 完全本地运行（无需联网）
+- [x] 4 道幻觉防线（Prompt 约束 + 阈值过滤 + 来源引用 + Rerank 把关）
 
 ## 🔌 集成方式 — 让任何大模型应用拥有 RAG 能力
 
