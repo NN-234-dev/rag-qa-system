@@ -1,0 +1,20 @@
+# Docker 构建时忽略的文件
+data/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.env
+.venv/
+venv/
+.idea/
+.vscode/
+*.db
+*.sqlite3
+README.md
+interview_prep.md
+mcp_config.json.example
+test_*.py
+demo_test.py
+compare_retrieval.py

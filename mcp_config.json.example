@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "rag-kb": {
+      "command": "python",
+      "args": ["src/mcp_server.py"],
+      "cwd": "/path/to/rag-qa-system"
+    }
+  }
+}
