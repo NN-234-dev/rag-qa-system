@@ -1,7 +1,4 @@
-# ============================================
-# RAG 智能问答系统 — Streamlit 主界面（多用户版）
-# 运行方式: streamlit run app.py
-# ============================================
+"""RAG 智能问答系统 — Streamlit 主界面（多用户版）"""
 
 import streamlit as st
 import time
@@ -35,9 +32,7 @@ from src.agent_graph import agent_ask_stream
 from src.image_handler import process_document_with_vision
 from src.multi_user import get_user_collection_name, get_shared_collection_name
 
-# ============================================
 # 页面设置
-# ============================================
 st.set_page_config(
     page_title=config.PAGE_TITLE,
     page_icon=config.PAGE_ICON,
@@ -45,17 +40,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ============================================
 # 会话状态初始化
-# ============================================
 if "current_user" not in st.session_state:
     st.session_state["current_user"] = config.DEFAULT_USER
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
-# ============================================
-# 侧边栏 — 用户管理 + 文档管理 + 参数配置
-# ============================================
+# 侧边栏
 with st.sidebar:
     st.title("📚 知识库管理")
 
@@ -298,9 +289,7 @@ with st.sidebar:
         rebuild_hybrid_index(username=username, include_shared=include_shared)
         st.rerun()
 
-# ============================================
-# 主区域 — 问答界面
-# ============================================
+# 主区域 — 问答
 st.title("📚 RAG 智能问答系统")
 st.caption(f"当前用户: **{username}** | 上传文档到左侧知识库，然后在下方提问。AI 会基于文档内容回答。")
 
